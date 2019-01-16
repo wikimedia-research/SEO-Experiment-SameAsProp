@@ -28,7 +28,7 @@ INSERT INTO bearloga.sameas_pages
     page_random,
     IF(page_random >= 0.5, 'treatment', 'control') AS test_group
   FROM wmf_raw.mediawiki_page
-  WHERE snapshot = '2018-10'
+  WHERE snapshot = '2018-12'
     AND wiki_db = '${wiki_db}'
     AND NOT page_is_redirect
     AND page_namespace = 0

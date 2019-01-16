@@ -88,7 +88,7 @@ fetch_data <- function(date) {
 
 from_date <- as.Date("2018-11-01")
 # to_date <- from_date
-to_date <- as.Date("2018-12-07")
+to_date <- as.Date("2019-01-15")
 dates <- seq(from_date, to_date, by = "day")
 results <- purrr::map_dfr(dates, fetch_data)
 readr::write_csv(results, file_name)
