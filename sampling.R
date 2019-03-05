@@ -1,8 +1,36 @@
 library(glue)
+library(magrittr)
 
-wikis <- dplyr::data_frame(
-  wiki_id = c("en.wikipedia", "es.wikipedia", "pl.wikipedia", "bg.wikipedia"),
-  wiki_db = c("enwiki", "eswiki", "plwiki", "bgwiki")
+snapshot <- "2019-01"
+
+# Excluded from test:
+# Indonesian: idwiki
+# Portuguese: ptwiki
+# Punjabi: pawiki, pnbwiki
+# Dutch: nlwiki, nds_nlwiki
+# Korean: kowiki
+# Bhojpuri: bhwiki
+# Cherokee: chrwiki
+# Kazakh: kkwiki
+# Catalan: cawiki
+# French: frwiki
+# Yoruba: yowiki
+# Kalmyk: xalwiki
+excluded_codes <- c(
+  "id", "pt", "pa", "pnb", "nl",
+  "nds_nl", "ko", "bh", "chr",
+  "kk", "ca", "fr", "yo", "xal"
+)
+
+language_codes <- readr::read_csv("meta.csv") %>%
+  dplyr::filter(n_articles >= 100) %>%
+  dplyr::pull(wiki_id) %>%
+  gsub(".wikipedia", "", .) %>%
+  setdiff(excluded_codes)
+
+wikis <- tibble::tibble(
+  wiki_id = paste0(language_codes, ".wikipedia"),
+  wiki_db = paste0(gsub("-", "_", language_codes, fixed = TRUE), "wiki")
 )
 
 recreate_table <- "
@@ -28,7 +56,7 @@ INSERT INTO bearloga.sameas_pages
     page_random,
     IF(page_random >= 0.5, 'treatment', 'control') AS test_group
   FROM wmf_raw.mediawiki_page
-  WHERE snapshot = '2018-12'
+  WHERE snapshot = '${snapshot}'
     AND wiki_db = '${wiki_db}'
     AND NOT page_is_redirect
     AND page_namespace = 0
@@ -37,9 +65,9 @@ INSERT INTO bearloga.sameas_pages
 load_pages <- function(wiki_id, wiki_db) {
   message(glue("Loading pages from {wiki_db} as {wiki_id}"))
   query <- glue(query, .open = "${")
-  system(glue('hive -e "{query}"'))
+  system(glue('nice ionice hive -e "{query}"'))
   return(invisible(NULL))
 }
 
 # iterate over the (wiki_id, wiki_db) pairs to populate the sameas_pages table:
-purrr::pmap(wikis, load_pages)
+purrr::pwalk(wikis, load_pages)

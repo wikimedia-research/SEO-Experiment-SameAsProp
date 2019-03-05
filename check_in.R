@@ -6,23 +6,31 @@ library(ggplot2)
 library(patchwork) # devtools::install_github("thomasp85/patchwork")
 
 file_name <- "pageviews_by_group.csv"
-file_name_tmp <- "pageviews_by_group_online.csv"
 if (!dir.exists("data")) dir.create("data")
 system(glue("scp stat7:/home/bearloga/{file_name} data/{file_name}"))
 
-pageviews <- readr::read_csv("data/pageviews_by_group.csv") %>%
-  # dplyr::filter(date <= "2019-01-15") %>%
+# from https://meta.wikimedia.org/wiki/List_of_Wikipedias:
+meta_data <- readr::read_csv("meta.csv") %>%
+  dplyr::filter(n_articles >= 100) %>%
+  dplyr::mutate(
+    articles = factor(
+      as.numeric(cut(n_articles, c(1e2, 1e3, 1e4, 1e5, 5e5, 1e6, 2e6, 6e7))),
+      (1:7),
+      paste(c("100-1K", "1K-10K", "10K-100K", "100K-500K", "500K-1M", "1M-2M", "2M-6M"), "articles")
+    )
+  )
+table(meta_data$articles)
+
+pageviews <- readr::read_csv(file.path("data", file_name)) %>%
+  dplyr::left_join(meta_data, by = c("wiki" = "wiki_id")) %>%
   dplyr::mutate(
     test_group = factor(test_group, c("control", "treatment")),
-    view_average = view_total / n_pages,
-    popular = factor(popular, c("yes", "no"), c("top 100 pages", "less popular pages"))
+    view_average = total_views / n_pages,
+    page_popularity = factor(page_popularity, c("top 100", "less popular"))
   ) %>%
-  dplyr::arrange(wiki_id, test_group, popular, date) %>%
-  dplyr::group_by(wiki_id, test_group, popular) %>%
-  dplyr::mutate(
-    roll_total = c(rep(NA, 3), RcppRoll::roll_mean(view_total, 7), rep(NA, 3)),
-    roll_average = c(rep(NA, 3), RcppRoll::roll_mean(view_average, 7), rep(NA, 3))
-  ) %>%
+  dplyr::group_by(wiki) %>%
+  dplyr::mutate(low_traffic_wiki = all(page_popularity == "top 100")) %>%
+  # all pages will be in the top 100 pages if the wiki has fewer than 100 visited pages
   dplyr::ungroup()
 
 annotations <- dplyr::data_frame(
@@ -32,57 +40,20 @@ annotations <- dplyr::data_frame(
            "Christmas Eve", "New Year's Day")
 )
 
-p1 <- ggplot(pageviews, aes(x = date)) +
-  geom_vline(aes(xintercept = date), data = annotations) +
-  geom_text(aes(y = 1e5, label = text), data = annotations,
-            angle = 90, nudge_x = -1, hjust = "left", vjust = "bottom",
-            alpha = 0.5) +
-  geom_line(aes(y = view_total, color = test_group), alpha = 0.6) +
-  geom_line(aes(y = roll_total, color = test_group), size = 1.1) +
-  # geom_smooth(aes(y = view_total, color = test_group), se = FALSE) +
-  scale_y_log10(labels = polloi::compress) +
-  scale_color_brewer(palette = "Set1") +
-  facet_grid(popular ~ wiki_id, scales = "free_y") +
-  wmf::theme_facet(14, "Source Sans Pro") +
-  labs(
-    title = "Total daily pageviews by group in sameAs A/B test",
-    x = "Date", y = "Search engine-referred user pageviews", color = "Test group"
-  )
-p1
-ggsave("plot1.png", p1, width = 16, height = 8, dpi = 100)
-
-p2 <- ggplot(pageviews, aes(x = date)) +
-  geom_vline(aes(xintercept = date), data = annotations) +
-  geom_text(aes(y = 1e0, label = text), data = annotations,
-            angle = 90, nudge_x = -1, hjust = "left", vjust = "bottom",
-            alpha = 0.5) +
-  geom_line(aes(y = view_average, color = test_group), alpha = 0.6) +
-  geom_line(aes(y = roll_average, color = test_group), size = 1.1) +
-  scale_y_log10(labels = polloi::compress) +
-  scale_color_brewer(palette = "Set1") +
-  facet_grid(popular ~ wiki_id, scales = "free_y") +
-  wmf::theme_facet(14, "Source Sans Pro") +
-  labs(
-    title = "Average daily pageviews by group in sameAs A/B test",
-    x = "Date", y = "Search engine-referred user pageviews", color = "Test group"
-  )
-p2
-ggsave("plot2.png", p1, width = 16, height = 8, dpi = 100)
-
-p3 <- ggplot(pageviews, aes(x = date)) +
-  geom_vline(aes(xintercept = date), data = annotations) +
-  geom_text(aes(y = 10, label = text), data = annotations,
-            angle = 90, nudge_x = -1, vjust = "bottom", hjust = "left",
-            alpha = 0.5) +
-  geom_line(aes(y = view_median, color = test_group), linetype = "solid") +
-  geom_line(aes(y = view_median, color = test_group), linetype = "dashed") +
-  scale_y_log10(labels = polloi::compress) +
-  scale_color_brewer(palette = "Set1") +
-  facet_grid(popular ~ wiki_id) +
-  wmf::theme_facet(14, "Source Sans Pro") +
-  labs(
-    title = "Median daily pageviews by group in sameAs A/B test",
-    x = "Date", y = "Search engine-referred user pageviews", color = "Test group"
-  )
-p3
-ggsave("plot3.png", p2, width = 16, height = 8, dpi = 100)
+avg_daily_traffic <- pageviews %>%
+  dplyr::filter(page_popularity == "less popular" | low_traffic_wiki) %>%
+  dplyr::mutate(total_views = ifelse(is.na(total_views), 0, total_views)) %>%
+  tidyr::complete(tidyr::nesting(articles, language, test_group), date, fill = list(total_views = 0, n_pages = 0)) %>%
+  dplyr::mutate(
+    period = ifelse(date <= "2018-11-20", "pre", "post"),
+    period = factor(period, c("pre", "post"), c("before deployment", "after deployment"))
+  ) %>%
+  dplyr::group_by(articles, language, test_group, period) %>%
+  dplyr::summarize(
+    views = mean(total_views),
+    logViews = mean(log(total_views + 1)),
+    pages = max(n_pages)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(!is.nan(views)) %>%
+  dplyr::mutate(g = paste0(test_group, language))
