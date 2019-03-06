@@ -57,3 +57,11 @@ avg_daily_traffic <- pageviews %>%
   dplyr::ungroup() %>%
   dplyr::filter(!is.nan(views)) %>%
   dplyr::mutate(g = paste0(test_group, language))
+
+avg_daily_traffic %>%
+  dplyr::filter(pages > 0) %>%
+  ggplot(aes(x = period, y = views, color = test_group, group = g)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ articles, scales = "free_y", ncol = 2) +
+  wmf::theme_facet()
